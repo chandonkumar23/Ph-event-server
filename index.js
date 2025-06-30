@@ -68,68 +68,79 @@ const authenticateJWT = async (req, res, next) => {
 };
 
 
-// ✅ Signup Route
+/// Signup route
 app.post('/signup', async (req, res) => {
-    const { username, email, photoUrl, password } = req.body;
+  const { username, email, photoUrl, password } = req.body;
 
-    try {
-        const existingUser = await usersCollection.findOne({ email });
-        if (existingUser) {
-            return res.status(409).json({ message: 'Email already in use' });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const result = await usersCollection.insertOne({
-            username,
-            email,
-            photoUrl,
-            password: hashedPassword,
-            createdAt: new Date()
-        });
-
-        res.status(201).json({
-            message: 'User registered successfully',
-            userId: result.insertedId
-        });
-    } catch (err) {
-        console.error("Signup error:", err);
-        res.status(500).json({ message: 'Internal server error' });
+  try {
+    const existingUser = await usersCollection.findOne({ email });
+    if (existingUser) {
+      return res.status(409).json({ message: 'Email already in use' });
     }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const result = await usersCollection.insertOne({
+      username,
+      email,
+      photoUrl,
+      password: hashedPassword,
+      createdAt: new Date()
+    });
+
+    res.status(201).json({
+      message: 'User registered successfully',
+      userId: result.insertedId
+    });
+  } catch (err) {
+    console.error("Signup error:", err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
 });
 
+// Login Route
 
-// ✅ Login Route
 app.post('/login', async (req, res) => {
-    const { username, password } = req.body;
+  const { email, password } = req.body;  
+  console.log("Login attempt for email:", email);
 
-    try {
-        const user = await usersCollection.findOne({ username });
-        if (!user) return res.status(401).json({ message: 'User not found' });
-
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(401).json({ message: 'Invalid password' });
-
-        const token = jwt.sign(
-            { userId: user._id, username: user.username },
-            JWT_SECRET,
-            { expiresIn: '7d' }
-        );
-
-        res.status(200).json({
-            message: 'Login successful',
-            token,
-            user: {
-                id: user._id,
-                username: user.username,
-                email: user.email,
-                photoUrl: user.photoUrl
-            }
-        });
-    } catch (err) {
-        console.error("Login error:", err);
-        res.status(500).json({ message: 'Internal server error' });
+  try {
+    const user = await usersCollection.findOne({ email });
+    if (!user) {
+      console.log("User not found for email:", email);
+      return res.status(401).json({ message: 'User not found' });
     }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      console.log("Invalid password for email:", email);
+      return res.status(401).json({ message: 'Invalid password' });
+    }
+
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    console.log("Login success for email:", email);
+
+    res.status(200).json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        photoUrl: user.photoUrl
+      }
+    });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
 });
+
+
 
 
 // ✅ Get Logged-In User Info
