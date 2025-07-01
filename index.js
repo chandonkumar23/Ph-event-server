@@ -8,75 +8,83 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 5000;
 
-app.use(cors());
+// Use CORS 
+app.use(cors({
+  origin: [
+    "https://ph-event-chandonkumar23s-projects.vercel.app",
+    "http://localhost:5173",
+    "https://event-149a2.web.app"
+  ],
+}));
+
 app.use(express.json());
 
 const uri = process.env.MONGO_URI;
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecret';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const client = new MongoClient(uri, {
-    serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
-    }
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  }
 });
 
 let usersCollection;
-let eventsCollection; // ✅ Define globally
+let eventsCollection;
 
 async function run() {
-    try {
-        await client.connect();
-        const db = client.db("eventDB");
-        usersCollection = db.collection("users");
-        eventsCollection = db.collection("events"); // ✅ Initialize collection
-        console.log("✅ Connected to MongoDB");
-    } catch (err) {
-        console.error("❌ MongoDB connection error:", err);
-    }
+  try {
+    await client.connect();
+    const db = client.db("eventDB");
+    usersCollection = db.collection("users");
+    eventsCollection = db.collection("events");
+    console.log(" Connected to MongoDB");
+  } catch (err) {
+    console.error(" MongoDB connection error:", err);
+  }
 }
 run();
 
-
-// 🔐 JWT Middleware
+// JWT Middleware
 const authenticateJWT = async (req, res, next) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ message: 'Authorization header missing' });
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ message: 'Authorization header missing' });
 
-    const token = authHeader.split(" ")[1];
-    if (!token) return res.status(401).json({ message: 'Token missing' });
+  const token = authHeader.split(" ")[1];
+  if (!token) return res.status(401).json({ message: 'Token missing' });
 
-    try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        const user = await usersCollection.findOne({ _id: new ObjectId(decoded.userId) });
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await usersCollection.findOne({ _id: new ObjectId(decoded.userId) });
 
-        if (!user) return res.status(401).json({ message: 'User not found' });
+    if (!user) return res.status(401).json({ message: 'User not found' });
 
-        req.user = {
-            id: user._id,
-            username: user.username,
-            email: user.email,
-            photoUrl: user.photoUrl,
-        };
+    req.user = {
+      id: user._id,
+      username: user.username,
+      email: user.email,
+      photoUrl: user.photoUrl,
+    };
 
-        next();
-    } catch (err) {
-        console.error("JWT error:", err);
-        return res.status(403).json({ message: 'Invalid or expired token' });
-    }
+    next();
+  } catch (err) {
+    console.error("JWT error:", err);
+    return res.status(403).json({ message: 'Invalid or expired token' });
+  }
 };
 
+// Routes
 
-/// Signup route
+// Signup
 app.post('/signup', async (req, res) => {
+  if (!usersCollection) return res.status(503).json({ message: "Server not ready" });
+
   const { username, email, photoUrl, password } = req.body;
 
   try {
     const existingUser = await usersCollection.findOne({ email });
-    if (existingUser) {
-      return res.status(409).json({ message: 'Email already in use' });
-    }
+    if (existingUser) return res.status(409).json({ message: 'Email already in use' });
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const result = await usersCollection.insertOne({
@@ -87,9 +95,17 @@ app.post('/signup', async (req, res) => {
       createdAt: new Date()
     });
 
+    const token = jwt.sign({ userId: result.insertedId, email }, JWT_SECRET, { expiresIn: '7d' });
+
     res.status(201).json({
-      message: 'User registered successfully',
-      userId: result.insertedId
+      message: 'Signup successful',
+      token,
+      user: {
+        id: result.insertedId,
+        username,
+        email,
+        photoUrl
+      }
     });
   } catch (err) {
     console.error("Signup error:", err);
@@ -97,32 +113,20 @@ app.post('/signup', async (req, res) => {
   }
 });
 
-// Login Route
-
+// Login
 app.post('/login', async (req, res) => {
-  const { email, password } = req.body;  
-  console.log("Login attempt for email:", email);
+  if (!usersCollection) return res.status(503).json({ message: "Try again or reload" });
+
+  const { email, password } = req.body;
 
   try {
     const user = await usersCollection.findOne({ email });
-    if (!user) {
-      console.log("User not found for email:", email);
-      return res.status(401).json({ message: 'User not found' });
-    }
+    if (!user) return res.status(401).json({ message: 'User not found' });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      console.log("Invalid password for email:", email);
-      return res.status(401).json({ message: 'Invalid password' });
-    }
+    if (!isMatch) return res.status(401).json({ message: 'Invalid password' });
 
-    const token = jwt.sign(
-      { userId: user._id, email: user.email },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    console.log("Login success for email:", email);
+    const token = jwt.sign({ userId: user._id.toString(), email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
     res.status(200).json({
       message: 'Login successful',
@@ -131,26 +135,24 @@ app.post('/login', async (req, res) => {
         id: user._id,
         username: user.username,
         email: user.email,
-        photoUrl: user.photoUrl
-      }
+        photoUrl: user.photoUrl || null,
+      },
     });
   } catch (err) {
-    console.error("Login error:", err);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error('Login error:', err);
+    res.status(500).json({ message: 'Internal server error', error: err.message });
   }
 });
 
-
-
-
-// ✅ Get Logged-In User Info
+// Logged-in user info
 app.get('/api/user/me', authenticateJWT, (req, res) => {
-    res.json(req.user);
+  res.json(req.user);
 });
 
-
-// ✅ Add Event Route (No Auth Required)
+// Add Event
 app.post('/api/events', async (req, res) => {
+  if (!eventsCollection) return res.status(503).json({ message: "Server not ready" });
+
   const { title, name, dateTime, location, description, attendeeCount, email } = req.body;
 
   if (!title || !name || !dateTime || !location || !description || !email) {
@@ -165,7 +167,7 @@ app.post('/api/events', async (req, res) => {
       location,
       description,
       attendeeCount: parseInt(attendeeCount) || 0,
-      email,          // save the email here
+      email,
       createdAt: new Date()
     });
 
@@ -176,50 +178,57 @@ app.post('/api/events', async (req, res) => {
   }
 });
 
-// ✅ Get All Events Route
+// Get All Events
 app.get('/api/events', async (req, res) => {
-    try {
-        const events = await eventsCollection
-            .find()
-            .sort({ createdAt: -1 }) // Optional: latest first
-            .toArray();
+  if (!eventsCollection) return res.status(503).json({ message: "Server not ready" });
 
-        res.status(200).json(events);
-    } catch (err) {
-        console.error("Get events error:", err);
-        res.status(500).json({ message: 'Internal server error' });
-    }
+  try {
+    const events = await eventsCollection.find().sort({ createdAt: -1 }).toArray();
+    res.status(200).json(events);
+  } catch (err) {
+    console.error("Get events error:", err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
 });
-// ✅ Join Event Route
+
+// Join Event
 app.patch("/api/events/join/:id", async (req, res) => {
-    const { id } = req.params;
-    try {
-        const result = await eventsCollection.updateOne(
-            { _id: new ObjectId(id) },
-            { $inc: { attendeeCount: 1 } }
-        );
-        if (result.modifiedCount === 0) {
-            return res.status(404).json({ message: "Event not found" });
-        }
-        res.status(200).json({ message: "Joined event successfully" });
-    } catch (err) {
-        console.error("Join event error:", err);
-        res.status(500).json({ message: "Internal server error" });
+  if (!eventsCollection) return res.status(503).json({ message: "Server not ready" });
+
+  const { id } = req.params;
+  try {
+    const result = await eventsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $inc: { attendeeCount: 1 } }
+    );
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({ message: "Event not found" });
     }
+    res.status(200).json({ message: "Joined event successfully" });
+  } catch (err) {
+    console.error("Join event error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
 });
 
-// MyEvent
+// My Events by email
 app.get('/api/events/:email', async (req, res) => {
-    console.log(req.params.email);
-    let params = {}
-    if (req.params?.email) {
-        params = { email: req.params.email }
-    }
-    const result = await eventsCollection.find(params).toArray();
-    res.send(result)
-})
-// PUT: Update an event
+  if (!eventsCollection) return res.status(503).json({ message: "Server not ready" });
+
+  try {
+    const email = req.params.email;
+    const events = await eventsCollection.find({ email }).toArray();
+    res.send(events);
+  } catch (err) {
+    console.error("Get my events error:", err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Update Event
 app.put('/api/events/:id', async (req, res) => {
+  if (!eventsCollection) return res.status(503).json({ message: "Server not ready" });
+
   const { id } = req.params;
   const updatedData = req.body;
 
@@ -239,8 +248,11 @@ app.put('/api/events/:id', async (req, res) => {
     res.status(500).send({ message: 'Failed to update event' });
   }
 });
-// DELETE: Delete an event
+
+// Delete Event
 app.delete('/api/events/:id', async (req, res) => {
+  if (!eventsCollection) return res.status(503).json({ message: "Server not ready" });
+
   const { id } = req.params;
 
   try {
@@ -257,14 +269,11 @@ app.delete('/api/events/:id', async (req, res) => {
   }
 });
 
-
-
-
-// ✅ Root
+// Root
 app.get('/', (req, res) => {
-    res.send("🎉 Event management server is running!");
+  res.send("🎉 Event management server is running!");
 });
 
 app.listen(port, () => {
-    console.log(` Server running at http://localhost:${port}`);
+  console.log(`🚀 Server running at http://localhost:${port}`);
 });
